@@ -51,6 +51,16 @@ $drafts = $stmt->fetchAll();
         Status: <strong><?= htmlspecialchars($d['status']) ?></strong>
     </div>
 
+    <?php if (!empty($d['safety_severity']) && $d['safety_severity'] !== 'ok'): ?>
+    <?php
+        $safetyReasons = json_decode($d['safety_reasons'] ?? '[]', true) ?: [];
+        $isBlock = $d['safety_severity'] === 'block';
+    ?>
+    <div style="margin:6px 0;padding:6px 10px;border-radius:4px;font-size:12px;background:<?= $isBlock ? '#3b1010' : '#2d2a10' ?>;color:<?= $isBlock ? '#f87171' : '#facc15' ?>;border-left:3px solid <?= $isBlock ? '#f87171' : '#facc15' ?>;">
+        <?= $isBlock ? 'BLOCKED' : 'FLAGGED' ?>: <?= htmlspecialchars(implode(' | ', $safetyReasons)) ?>
+    </div>
+    <?php endif; ?>
+
     <textarea id="content-<?= $d['id'] ?>"<?= $d['status'] === 'published' ? ' readonly' : '' ?>><?= htmlspecialchars($d['content']) ?></textarea>
 
     <div style="margin-top:10px;">
