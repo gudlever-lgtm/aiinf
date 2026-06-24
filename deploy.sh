@@ -17,22 +17,32 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     die "Uncommitted changes present. Commit or stash first."
 fi
 
-# ── 2. Merge current branch into main and push ────────────────────────────────
+# ── 2. Sync main with origin ──────────────────────────────────────────────────
 CURRENT=$(git rev-parse --abbrev-ref HEAD)
 
-if [ "$CURRENT" = "main" ]; then
-    info "On main — pushing..."
-    git push origin main
+if [ -d "$DEPLOY_PATH" ]; then
+    # Running on the server — pull from origin rather than push
+    info "On server — pulling main from origin..."
+    if [ "$CURRENT" != "main" ]; then
+        git checkout main
+    fi
+    git pull origin main
+    ok "main pulled"
 else
-    info "Merging $CURRENT into main..."
-    git checkout main
-    git pull origin main --ff-only
-    git merge --no-ff "$CURRENT" -m "Deploy: merge $CURRENT"
-    git push origin main
-    git checkout "$CURRENT"
+    # Running from a dev machine — push local changes first
+    if [ "$CURRENT" = "main" ]; then
+        info "On main — pushing..."
+        git push origin main
+    else
+        info "Merging $CURRENT into main..."
+        git checkout main
+        git pull origin main --ff-only
+        git merge --no-ff "$CURRENT" -m "Deploy: merge $CURRENT"
+        git push origin main
+        git checkout "$CURRENT"
+    fi
+    ok "main pushed"
 fi
-
-ok "main pushed"
 
 # ── 3. Deploy (local or remote) ───────────────────────────────────────────────
 deploy_local() {
