@@ -370,7 +370,6 @@
         <a class="nav-link" href="#/settings" data-route="settings">API Settings</a>
         <a class="nav-link" href="#/import"   data-route="import">Import Commits</a>
         <a class="nav-link" href="#/generate" data-route="generate">Generate AI</a>
-        <a class="nav-link" href="#/migrate"  data-route="migrate">DB Migration</a>
     </nav>
 </aside>
 
