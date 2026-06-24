@@ -136,7 +136,13 @@
             border-radius: 10px;
             text-align: center;
             border: 1px solid #252525;
+            display: block;
+            text-decoration: none;
+            color: inherit;
+            transition: background 0.15s, border-color 0.15s;
         }
+
+        a.stat-card:hover { background: #222; border-color: #3a3a3a; }
 
         .stat-card h2 { font-size: 30px; color: #fff; margin-bottom: 6px; }
         .stat-card p  { font-size: 11px; color: #555; }
