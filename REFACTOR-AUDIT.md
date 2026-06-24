@@ -1,181 +1,196 @@
-# Refactor Audit — Dead Standalone UI
+# REFACTOR-AUDIT.md — Prompt 0.5 Generator Quality
 
-## File Inventory
+## 1. Files
 
-### Root-level pages
-| File | Role | Status |
-|---|---|---|
-| `index.php` | SPA entry point | **LIVE** |
-| `drafts.php` | Old standalone drafts UI | **DEAD** |
-| `publish_queue.php` | Old standalone publish-queue UI | **DEAD** |
-| `settings.php` | Old standalone settings form | **DEAD** |
-| `publish.php` | CLI publisher (no-HTML, echo output) | **AMBIGUOUS** — see note |
+| Role | Path |
+|---|---|
+| Generator | `scripts/generate_drafts.php` |
+| Ingest | `scripts/import_commits.php` |
+| Generator HTTP wrapper | `ajax/generate.php` |
+| Ingest HTTP wrapper | `ajax/import.php` |
 
-### `/ajax/` (SPA partials — all LIVE)
-- `ajax/dashboard.php`
-- `ajax/db.php` — shared DB helper, `require_once`'d by other ajax files
-- `ajax/drafts.php`
-- `ajax/generate.php`
-- `ajax/import.php`
-- `ajax/publish_queue.php`
-- `ajax/settings.php`
-
-### `/api/` (SPA action handlers — all LIVE)
-- `api/draft_action.php` — called by `app.js` lines 60, 96
-- `api/publish_action.php` — called by `app.js` lines 122, 142
-- `api/settings_save.php`
-
-### `/scripts/` (utilities)
-| File | Role | Status |
-|---|---|---|
-| `scripts/env.php` | Shared `.env` loader | **LIVE** — `require_once`'d by all `/api/` files and `/ajax/db.php` |
-| `scripts/generate_drafts.php` | AI draft generation | **LIVE** — invoked by `ajax/generate.php:14` |
-| `scripts/import_commits.php` | Commit importer | **LIVE** — invoked by `ajax/import.php:14` |
-| `scripts/draft_action.php` | Old draft action handler | **DEAD** — only called by dead `drafts.php` |
-| `scripts/publish_action.php` | Old publish action handler | **DEAD** — only called by dead `publish_queue.php` |
-| `scripts/sync_fellis.sh` | Git pull shell script | **LIVE** (external cron candidate) |
+No schema file exists in the repo. Structure inferred from queries.
 
 ---
 
-## Inbound-reference trace per candidate file
+## 2. LLM Configuration (current)
 
-### `drafts.php` (root)
-- Inbound references: **none** from any other file.
-- Self-references: filter links `<a href="drafts.php?type=...">` inside its own HTML.
-- Outbound: POSTs to `/scripts/draft_action.php` (dead); `require_once scripts/env.php` (live, but that doesn't make this file live).
-- SPA equivalent: `/ajax/drafts.php` (what `app.js` actually loads).
-- **Verdict: CONFIRMED DEAD.**
-
-### `publish_queue.php` (root)
-- Inbound references: **none** from any other file.
-- Outbound: POSTs to `/scripts/publish_action.php` (dead).
-- SPA equivalent: `/ajax/publish_queue.php`.
-- **Verdict: CONFIRMED DEAD.**
-
-### `settings.php` (root)
-- Inbound references: **none** from any other file. (`app.js:5` references `/ajax/settings.php`, not this file.)
-- Outbound: `require_once scripts/env.php` (live dependency, does not make this page live); POSTs to itself.
-- SPA equivalent: `/ajax/settings.php` + `/api/settings_save.php`.
-- **Verdict: CONFIRMED DEAD.**
-
-### `scripts/draft_action.php`
-- Inbound references: only `drafts.php` (root) at lines 124 and 152 — which is itself dead.
-- No reference from `/api/` or `/ajax/` or `app.js`.
-- **Verdict: CONFIRMED DEAD** (dead caller, dead callee).
-
-### `scripts/publish_action.php`
-- Inbound references: only `publish_queue.php` (root) at lines 65 and 79 — which is itself dead.
-- No reference from `/api/` or `/ajax/` or `app.js`.
-- **Verdict: CONFIRMED DEAD** (dead caller, dead callee).
+| Property | Value |
+|---|---|
+| Vendor | Mistral AI |
+| Endpoint | `https://api.mistral.ai/v1/chat/completions` |
+| Model | `mistral-small-latest` (env: `MISTRAL_MODEL`) |
+| Temperature | 0.4 |
 
 ---
 
-## Ambiguous / Do Not Touch
+## 3. Current system message (verbatim)
 
-### `publish.php` (root)
-- Inbound references in repo: **zero**.
-- Content: CLI-style PHP, writes to `storage/publish.log`, no HTML output, processes `ai_drafts` with `status = 'approved'` and marks them `published`.
-- **Owner confirmed: NOT cron-invoked. CONFIRMED DEAD — add to deletion list.**
-
----
-
-## Summary: Safe to Delete
-
-These six files have zero inbound references from any live file and are superseded by the SPA:
-
-1. `drafts.php`
-2. `publish_queue.php`
-3. `settings.php`
-4. `publish.php`
-5. `scripts/draft_action.php`
-6. `scripts/publish_action.php`
-
-**Do NOT delete:** `scripts/env.php`, anything under `/ajax/`, `/api/`, or `/scripts/` except the two listed above.
+```
+Du er en produkt- og kommunikationsassistent for Fellis. Skriv præcist, uden hype, og fokuser på reel værdi.
+```
 
 ---
 
+## 4. Current user prompt template (verbatim, from `generate_drafts.php` lines 84–119)
+
+```
+Du analyserer en Git commit fra Fellis.
+
+FELLIS BESKRIVELSE:
+Fellis er en europæisk social platform baseret på transparens, privatliv og ikke-algoritmisk feed.
+
+COMMIT:
+- Hash: {commit_hash}
+- Author: {author}
+- Message: {message}
+
+OPGAVE:
+Generér følgende 3 outputs:
+
+1. CHANGELOG (kort og teknisk)
+2. LINKEDIN POST (professionel, ingen hype)
+3. FOUNDER UPDATE (reflekterende, ærlig)
+
+REGLER:
+- ingen overdrivelse
+- ingen marketingfluff
+- vær konkret
+- hvis commit er lille → skriv det som lille ændring
+- hvis commit er teknisk → forklar enkel værdi
+
+FORMAT:
+
+CHANGELOG:
+...
+
+LINKEDIN:
+...
+
+FOUNDER:
+...
+```
+
 ---
 
-# Prompt 2 Audit — Credential Encryption
+## 5. Confirmed DB findings
 
-## Schema
+### `repo_events`
+- `processed` column: **does not exist** — generator never marks events done
+- `changed_files` column: **does not exist** — ingest only stores hash/author/message
+- Dedup at ingest: `INSERT IGNORE` on `commit_hash` (works for re-import, but no UNIQUE constraint confirmed in schema)
 
-`SHOW CREATE TABLE api_settings` cannot be run directly from this environment, but the
-columns are established by every INSERT/UPDATE in the codebase:
+### `ai_drafts`
+- `(event_id, type)` unique constraint: **does not exist**
+- Generator current dedup: `WHERE id NOT IN (SELECT event_id FROM ai_drafts WHERE event_id IS NOT NULL)` — this excludes the entire event if *any* draft exists for it, but it's not atomic and has no DB-level protection
 
-| Column | Type (inferred) | Secret? |
-|---|---|---|
-| `service` | varchar, UNIQUE KEY | No |
-| `api_key` | text/varchar | **Yes** |
-| `api_secret` | text/varchar | **Yes** |
-| `access_token` | text/varchar | **Yes** |
-| `refresh_token` | text/varchar | **Yes** |
-| `base_url` | text/varchar | No — public URL |
+### `processed` flag
+- Not set anywhere after generation. Re-running the generator on a fresh DB would re-process all events.
 
-All four secret columns are stored as plaintext today.
+---
 
-## Every read/write site
+## 6. Other issues confirmed
 
-### Write path
-**`api/settings_save.php`** (lines 28–44) — the only write path used by the SPA.
-- Directly interpolates `$_POST[...]` into an `INSERT ... ON DUPLICATE KEY UPDATE`.
-- If a POST field is empty string (`''`), it overwrites the stored value with blank (bug: must fix).
-- No encryption at all.
+1. **All three draft types generated for every commit** — merge commits, typo fixes, gitignore edits all get a LinkedIn post and a founder update.
+2. **Fallback corrupts data**: if regex parsing fails, `$changelog = $aiOutput` (entire raw LLM response including the other sections stored as changelog).
+3. **Empty content stored**: no check before `INSERT INTO ai_drafts` — model returning empty string for a section is silently saved.
+4. **No retry count** — if the Mistral call fails (network, quota), the event stays unprocessed forever with no cap.
+5. **No `processed` update** — on the next run, a partially-drafted event (e.g. only changelog inserted before a crash) gets skipped by the `NOT IN` check, meaning linkedin_post and founder_update are never generated for it.
 
-### Read paths
-1. **`ajax/settings.php:4`** — `SELECT * FROM api_settings` fetched into `$rows`.
-   - Line 48: `print_r($rows, true)` rendered directly to the page (HTML-escaped but fully visible). Every secret is exposed in the settings panel.
-   - Form inputs (lines 36–40) have no `value=` attribute — they show only placeholder text. No pre-population, but the `print_r` below them reveals everything.
+---
 
-2. **`publish.php`** (now confirmed dead) — read from `ai_drafts`, never touched `api_settings`. No credential read.
+## 7. Proposed replacement prompt
 
-3. **No other file** reads from `api_settings`. LinkedIn API calls are not yet implemented (publish.php was a simulated stub). So "decrypt at point of use" only applies to a future publisher; for now it applies to the settings display.
+**Requires approval before implementation.**
 
-### `print_r` audit
-Only one live instance: `ajax/settings.php:48`. The dead `settings.php:60` has a bare `print_r` (no htmlspecialchars) — that file is being deleted.
+### 7a. Significance gate (pre-generation, no LLM call needed)
 
-## Environment / key status
+Skip generation entirely (mark processed, no draft) when commit message matches:
 
-- `.env` is gitignored and not present in this checkout.
-- `scripts/env.php` is a simple line-by-line parser (no quoting support). It sets `$_ENV[key] = trim(value)`.
-- No `APP_ENCRYPTION_KEY` exists. We will add one.
-- No `.env.example` exists. We will create one.
+```
+/^Merge (pull request|branch)/i
+/^(chore|ci|build|style|refactor|test)(\(.*?\))?:/i
+/^(bump|update) (version|deps|dependencies|lock|lockfile)/i
+/^(remove duplicate|fix typo|whitespace|formatting)/i
+```
 
-## Crypto availability
+For surviving commits, determine output types:
+- **changelog only**: any commit not matching "notable" heuristics below
+- **changelog + linkedin_post + founder_update**: only when message matches a "notable" pattern:
+  ```
+  /^(feat|feature)(\(.*?\))?:/i
+  /^(fix)(\(.*?\))?:/i   (non-trivial — message longer than ~30 chars)
+  /\b(release|v\d+\.\d+|launch|ship|deploy)\b/i
+  ```
 
-Both `sodium` (libsodium) and `openssl` extensions are loaded on this PHP installation. **Use libsodium** (`sodium_crypto_secretbox`) — authenticated encryption, simpler API, no separate HMAC needed.
+File-based scoring is deferred until `changed_files` is populated at ingest.
 
-Key size: `SODIUM_CRYPTO_SECRETBOX_KEYBYTES` = 32 bytes. Store as base64 in `.env`.
-Nonce size: `SODIUM_CRYPTO_SECRETBOX_NONCEBYTES` = 24 bytes. Prepend to ciphertext, base64-encode the pair.
-Ciphertext format on disk: `base64(nonce . ciphertext)` — single string per column, fits existing varchar.
+### 7b. New system message (proposed)
 
-## Proposed implementation plan
+```
+Du er Lars. Du skriver om dit arbejde på Fellis — en europæisk social platform.
+Skriv dansk. Tærslen for at sige noget er høj: skriv kun, hvis der er noget konkret at sige.
+Ingen buzzwords. Ingen sætninger der starter med "Det er ikke...". Ingen "men det er nødvendigt".
+Ingen refleksioner over tillid, langsigtet tænkning eller "det handler om mere end kode".
+Brug ikke disse vendinger: "det er ikke glamourøst", "små skridt men vigtige", "transparent", "autentisk", "deler gerne".
+```
 
-1. **Generate key**: `base64_encode(random_bytes(32))` → add as `APP_ENCRYPTION_KEY=<value>` to `.env`.
-   Create `.env.example` with placeholder `APP_ENCRYPTION_KEY=base64_32_byte_key_here` and all DB vars.
+### 7c. New user prompt template (proposed)
 
-2. **`scripts/crypto.php`**: `encrypt(string $plain): string` / `decrypt(string $encoded): string`.
-   - `encrypt`: generate random nonce, `sodium_crypto_secretbox($plain, $nonce, $key)`, return `base64(nonce . ciphertext)`.
-   - `decrypt`: base64-decode, split nonce/ciphertext, `sodium_crypto_secretbox_open(...)`. Return false on failure.
-   - Key loaded from `$_ENV['APP_ENCRYPTION_KEY']` (caller must have loaded .env first).
+```
+COMMIT:
+- Besked: {message}
+- Forfatter: {author}
 
-3. **`api/settings_save.php`** changes:
-   - Before writing, for each secret field: if POST value is non-empty, encrypt it; if empty, `SELECT` the existing stored value and keep it unchanged (don't overwrite with blank).
-   - `base_url` is not a secret — store plaintext.
+REGLER:
+- Skriv kun de sektioner du får besked på nedenfor.
+- Returner SKIP i en sektion, hvis der reelt ikke er noget at sige.
+- Strip alle markdown-markører (**, ---, #) fra output.
+- Max-længder: CHANGELOG = 1-2 linjer faktuel tekst. LINKEDIN = 2-4 sætninger, ingen indledning. FOUNDER = 3-6 sætninger, kun hvis der er en reel pointe.
 
-4. **`ajax/settings.php`** changes:
-   - Remove `print_r` dump entirely.
-   - After fetching rows, decrypt each secret field and show masked: `str_repeat('*', max(0, strlen($plain)-4)) . substr($plain, -4)` — or `(not set)` if empty/null.
-   - Form inputs remain empty (for replacement entry). Add a note: "Leave blank to keep existing value."
+{SECTIONS_PLACEHOLDER}
 
-5. **`scripts/migrate_encrypt_credentials.php`**: one-off migration.
-   - For each row in `api_settings`, for each secret column: check if value looks like existing base64-encoded ciphertext (try `decrypt()`); if decrypt succeeds, skip (already encrypted); otherwise encrypt in place.
-   - Print a summary: `N rows migrated, M already encrypted, K skipped (empty)`.
-   - Idempotent — safe to run multiple times.
+FORMAT (eksakt — ingen andre overskrifter):
 
-## No behavior change to the SPA
+CHANGELOG:
+...
 
-- The settings route (`/ajax/settings.php`) continues to return HTTP 200.
-- Saving via `app.js` → `POST /api/settings_save.php` continues to work.
-- The `base_url` column is non-secret and unchanged.
-- No other SPA routes are affected.
+{OPTIONAL_SECTIONS}
+```
+
+Where `SECTIONS_PLACEHOLDER` and `OPTIONAL_SECTIONS` are populated by PHP based on the significance classification:
+- Trivial commit → only `CHANGELOG:` section requested and expected
+- Notable commit → all three sections requested
+
+### 7d. Output handling (proposed)
+
+- Strip leading/trailing `**`, `---`, `#`, whitespace from each parsed section
+- If a section contains only `SKIP` or is empty after stripping → do not insert that row
+- If all sections are empty/SKIP → log, mark event processed with `processed=2` (skipped), no draft rows
+- Max retry count: 2 (configurable). After 2 failures, mark `processed=3` (error), log, move on.
+
+---
+
+## 8. Schema changes needed (for approval)
+
+### A. `repo_events`
+```sql
+ALTER TABLE repo_events ADD COLUMN processed TINYINT NOT NULL DEFAULT 0;
+-- 0 = pending, 1 = done, 2 = skipped (noise), 3 = error
+ALTER TABLE repo_events ADD COLUMN retry_count TINYINT NOT NULL DEFAULT 0;
+-- Ensure commit_hash is truly unique (ingest uses INSERT IGNORE, but need confirmed UNIQUE):
+ALTER TABLE repo_events ADD UNIQUE KEY uq_commit_hash (commit_hash);
+-- changed_files deferred to a follow-up prompt
+```
+
+### B. `ai_drafts`
+```sql
+-- Option chosen: existence check before INSERT (simpler than UNIQUE constraint,
+-- avoids migration risk on a table that may already have duplicates).
+-- Generator will SELECT COUNT(*) WHERE event_id=? AND type=? before each INSERT.
+-- A UNIQUE constraint can be added later once duplicates are cleaned.
+```
+
+---
+
+**STOP. Awaiting approval of prompt + gates before any code changes.**
