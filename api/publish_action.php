@@ -31,6 +31,13 @@ if ($action === "publish") {
 
     $pdo->prepare("UPDATE publish_queue SET status='approved' WHERE id=?")->execute([$id]);
 
+    $stmt = $pdo->prepare("SELECT draft_id FROM publish_queue WHERE id=?");
+    $stmt->execute([$id]);
+    $draft_id = $stmt->fetchColumn();
+    if ($draft_id) {
+        $pdo->prepare("UPDATE ai_drafts SET status='published' WHERE id=?")->execute([$draft_id]);
+    }
+
     foreach ($targets as $t) {
         $pdo->prepare("INSERT INTO publish_targets (queue_id, target) VALUES (?,?)")->execute([$id, $t]);
     }

@@ -51,12 +51,16 @@ $drafts = $stmt->fetchAll();
         Status: <strong><?= htmlspecialchars($d['status']) ?></strong>
     </div>
 
-    <textarea id="content-<?= $d['id'] ?>"><?= htmlspecialchars($d['content']) ?></textarea>
+    <textarea id="content-<?= $d['id'] ?>"<?= $d['status'] === 'published' ? ' readonly' : '' ?>><?= htmlspecialchars($d['content']) ?></textarea>
 
     <div style="margin-top:10px;">
+        <?php if ($d['status'] !== 'published'): ?>
         <button class="btn-approve" onclick="draftAction(<?= $d['id'] ?>,'approve')">Accept</button>
         <button class="btn-reject"  onclick="draftAction(<?= $d['id'] ?>,'reject')">Reject</button>
         <button class="btn-save"    onclick="draftSave(<?= $d['id'] ?>)">Save Edit</button>
+        <?php else: ?>
+        <span style="color:#22c55e;font-size:12px;">Published</span>
+        <?php endif; ?>
     </div>
 
 </div>
