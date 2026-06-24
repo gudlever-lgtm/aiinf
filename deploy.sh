@@ -34,34 +34,50 @@ fi
 
 ok "main pushed"
 
-# ── 3. Remote deploy ──────────────────────────────────────────────────────────
-SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
-[ -n "$SSH_KEY" ] && SSH_OPTS+=(-i "$SSH_KEY")
+# ── 3. Deploy (local or remote) ───────────────────────────────────────────────
+deploy_local() {
+    local path="$1"
+    info "Deploying locally to $path ..."
+    cd "$path"
+    echo "  git pull origin main"
+    git pull origin main
+    echo "  running DB migrations..."
+    for f in scripts/migrate_*.php; do
+        [ -f "$f" ] || continue
+        echo "    php $f"
+        php "$f"
+    done
+    # Uncomment if PHP-FPM opcache needs a flush after deploy:
+    # echo "  reloading php-fpm..."
+    # systemctl reload php8.2-fpm 2>/dev/null || true
+    echo "  done."
+}
 
-info "Deploying to $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH ..."
-
-ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" bash -s "$DEPLOY_PATH" <<'REMOTE'
+deploy_remote() {
+    local path="$1"
+    SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+    [ -n "$SSH_KEY" ] && SSH_OPTS+=(-i "$SSH_KEY")
+    info "Deploying to $DEPLOY_USER@$DEPLOY_HOST:$path ..."
+    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" bash -s "$path" <<'REMOTE'
 set -euo pipefail
-DEPLOY_PATH="$1"
-
-echo "  cd $DEPLOY_PATH"
-cd "$DEPLOY_PATH"
-
+cd "$1"
 echo "  git pull origin main"
 git pull origin main
-
 echo "  running DB migrations..."
 for f in scripts/migrate_*.php; do
     [ -f "$f" ] || continue
     echo "    php $f"
     php "$f"
 done
-
-# Uncomment if PHP-FPM opcache needs a flush after deploy:
-# echo "  reloading php-fpm..."
-# systemctl reload php8.2-fpm 2>/dev/null || true
-
 echo "  done."
 REMOTE
+}
+
+# Run locally if the deploy path exists on this machine, otherwise SSH.
+if [ -d "$DEPLOY_PATH" ]; then
+    deploy_local "$DEPLOY_PATH"
+else
+    deploy_remote "$DEPLOY_PATH"
+fi
 
 ok "Deploy complete."
