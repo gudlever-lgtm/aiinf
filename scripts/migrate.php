@@ -102,4 +102,4 @@ $pdo->exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_service ON api_settings (servic
 echo "api_settings UNIQUE(service): ok\n";
 
 echo "\nAll migrations complete.\n";
-echo "IMPORTANT: add ENCRYPTION_KEY=<random-string> to your .env to enable credential encryption.\n";
+echo "IMPORTANT: set APP_ENCRYPTION_KEY in .env (base64-encoded 32-byte key) to enable credential encryption.\n";
