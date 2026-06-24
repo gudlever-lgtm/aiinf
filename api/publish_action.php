@@ -35,7 +35,7 @@ if ($action === "publish") {
     $stmt->execute([$id]);
     $draft_id = $stmt->fetchColumn();
     if ($draft_id) {
-        $pdo->prepare("UPDATE ai_drafts SET status='published' WHERE id=?")->execute([$draft_id]);
+        $pdo->prepare("UPDATE ai_drafts SET status='published', published_at=NOW() WHERE id=?")->execute([$draft_id]);
     }
 
     foreach ($targets as $t) {
