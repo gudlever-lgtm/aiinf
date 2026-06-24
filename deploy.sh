@@ -45,18 +45,43 @@ else
 fi
 
 # ── 3. Deploy (local or remote) ───────────────────────────────────────────────
-deploy_local() {
-    local path="$1"
-    info "Deploying locally to $path ..."
-    cd "$path"
-    echo "  git pull origin main"
-    git pull origin main
-    echo "  running DB migrations..."
+load_env() {
+    local envfile="$1/.env"
+    DB_HOST="localhost"; DB_NAME=""; DB_USER=""; DB_PASS=""
+    [ -f "$envfile" ] || return
+    DB_HOST=$(grep '^DB_HOST=' "$envfile" | cut -d= -f2- | tr -d '\r')
+    DB_NAME=$(grep '^DB_NAME=' "$envfile" | cut -d= -f2- | tr -d '\r')
+    DB_USER=$(grep '^DB_USER=' "$envfile" | cut -d= -f2- | tr -d '\r')
+    DB_PASS=$(grep '^DB_PASS=' "$envfile" | cut -d= -f2- | tr -d '\r')
+}
+
+run_migrations() {
+    echo "  running PHP migrations..."
     for f in scripts/migrate_*.php; do
         [ -f "$f" ] || continue
         echo "    php $f"
         php "$f"
     done
+    if [ -n "$DB_NAME" ]; then
+        echo "  running SQL migrations..."
+        for f in scripts/migrate_*.sql; do
+            [ -f "$f" ] || continue
+            echo "    mysql < $f"
+            MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < "$f"
+        done
+    else
+        echo "  (no DB credentials — skipping SQL migrations)"
+    fi
+}
+
+deploy_local() {
+    local path="$1"
+    info "Deploying locally to $path ..."
+    cd "$path"
+    load_env "$path"
+    echo "  git pull origin main"
+    git pull origin main
+    run_migrations
     # Uncomment if PHP-FPM opcache needs a flush after deploy:
     # echo "  reloading php-fpm..."
     # systemctl reload php8.2-fpm 2>/dev/null || true
@@ -73,12 +98,34 @@ set -euo pipefail
 cd "$1"
 echo "  git pull origin main"
 git pull origin main
-echo "  running DB migrations..."
+
+# Load .env credentials
+envfile="$1/.env"
+DB_HOST="localhost"; DB_NAME=""; DB_USER=""; DB_PASS=""
+if [ -f "$envfile" ]; then
+    DB_HOST=$(grep '^DB_HOST=' "$envfile" | cut -d= -f2- | tr -d '\r')
+    DB_NAME=$(grep '^DB_NAME=' "$envfile" | cut -d= -f2- | tr -d '\r')
+    DB_USER=$(grep '^DB_USER=' "$envfile" | cut -d= -f2- | tr -d '\r')
+    DB_PASS=$(grep '^DB_PASS=' "$envfile" | cut -d= -f2- | tr -d '\r')
+fi
+
+echo "  running PHP migrations..."
 for f in scripts/migrate_*.php; do
     [ -f "$f" ] || continue
     echo "    php $f"
     php "$f"
 done
+
+if [ -n "$DB_NAME" ]; then
+    echo "  running SQL migrations..."
+    for f in scripts/migrate_*.sql; do
+        [ -f "$f" ] || continue
+        echo "    mysql < $f"
+        MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < "$f"
+    done
+else
+    echo "  (no DB credentials — skipping SQL migrations)"
+fi
 echo "  done."
 REMOTE
 }
