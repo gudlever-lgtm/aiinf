@@ -54,7 +54,12 @@ function getFewShotExamples(PDO $pdo, string $type, int $limit = 2): array
          WHERE type = ? AND status IN ('approved', 'published')
          ORDER BY id DESC LIMIT ?"
     );
-    $stmt->execute([$type, $limit]);
+    // LIMIT must be bound as an integer. With emulated prepares (the MySQL/MariaDB
+    // default) execute([...]) binds every value as a string, producing LIMIT '2',
+    // which is a SQL syntax error.
+    $stmt->bindValue(1, $type, PDO::PARAM_STR);
+    $stmt->bindValue(2, $limit, PDO::PARAM_INT);
+    $stmt->execute();
     return $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
