@@ -160,6 +160,37 @@ window.publishReject = function(id) {
     .catch(function(err) { toast('Error: ' + err.message, 'error'); });
 };
 
+// ── Regenerate draft ──────────────────────────────────────────────────────────
+
+window.draftRegenerate = function(id, btn) {
+    var origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Regenerating...';
+
+    fetch('/api/regenerate_draft.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'id=' + id,
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+        btn.disabled = false;
+        btn.textContent = origText;
+        if (res.content) {
+            var ta = document.getElementById('content-' + id);
+            if (ta) ta.value = res.content;
+            toast('Regenerated — save or accept if you like it', 'info');
+        } else {
+            toast('Regeneration failed: ' + (res.error || 'unknown error'), 'error');
+        }
+    })
+    .catch(function(err) {
+        btn.disabled = false;
+        btn.textContent = origText;
+        toast('Error: ' + err.message, 'error');
+    });
+};
+
 // ── Settings save ─────────────────────────────────────────────────────────────
 
 window.saveSettings = function(form) {
