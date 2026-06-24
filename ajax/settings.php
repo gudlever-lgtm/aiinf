@@ -39,6 +39,7 @@ function maskSecret(?string $stored): string {
                 <li><strong style="color:#ccc;">API Secret</strong> — Client Secret shown on the Auth tab</li>
                 <li><strong style="color:#ccc;">Access Token</strong> — Generate via OAuth 2.0 (see step 3)</li>
                 <li><strong style="color:#ccc;">Refresh Token</strong> — Returned alongside the access token if <code>offline_access</code> scope is granted</li>
+                <li><strong style="color:#ccc;">Author URN</strong> — Your LinkedIn member URN, e.g. <code>urn:li:person:ABC123</code> (find it via <code>/v2/me</code>)</li>
                 <li><strong style="color:#ccc;">Base URL</strong> — Always <code>https://api.linkedin.com</code></li>
             </ul>
 
@@ -76,8 +77,36 @@ function maskSecret(?string $stored): string {
             <?php if ($li): ?><small style="font-size:11px;color:#555;margin-left:6px;"><?= htmlspecialchars(maskSecret($li['refresh_token'] ?? '')) ?></small><?php endif; ?>
         </div>
 
+        <input name="author_urn" type="text" placeholder="Author URN (e.g. urn:li:person:ABC123)" value="<?= htmlspecialchars($li['author_urn'] ?? '') ?>" style="margin-bottom:8px;">
         <input name="base_url" placeholder="https://api.linkedin.com" value="<?= htmlspecialchars($li['base_url'] ?? '') ?>">
 
         <button type="submit" class="btn-save" style="margin-top:10px;">Save</button>
     </form>
 </div>
+
+<hr>
+
+<h3>Current Settings</h3>
+<?php if (!$rows): ?>
+<p style="color:#555;font-size:13px;">No settings saved yet.</p>
+<?php elseif (!$li): ?>
+<p style="color:#555;font-size:13px;">No LinkedIn settings saved yet.</p>
+<?php else: ?>
+<table style="font-size:12px;color:#888;border-collapse:collapse;width:100%;margin-top:10px;">
+    <thead>
+        <tr style="color:#aaa;text-align:left;border-bottom:1px solid #222;">
+            <th style="padding:6px 12px;">Field</th>
+            <th style="padding:6px 12px;">Value</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr><td style="padding:5px 12px;color:#666;">Service</td><td><?= htmlspecialchars($li['service']) ?></td></tr>
+        <tr><td style="padding:5px 12px;color:#666;">API Key</td><td><?= htmlspecialchars(maskSecret($li['api_key'] ?? '')) ?></td></tr>
+        <tr><td style="padding:5px 12px;color:#666;">API Secret</td><td><?= htmlspecialchars(maskSecret($li['api_secret'] ?? '')) ?></td></tr>
+        <tr><td style="padding:5px 12px;color:#666;">Access Token</td><td><?= htmlspecialchars(maskSecret($li['access_token'] ?? '')) ?></td></tr>
+        <tr><td style="padding:5px 12px;color:#666;">Refresh Token</td><td><?= htmlspecialchars(maskSecret($li['refresh_token'] ?? '')) ?></td></tr>
+        <tr><td style="padding:5px 12px;color:#666;">Author URN</td><td><?= $li['author_urn'] ? htmlspecialchars($li['author_urn']) : '<em style="color:#444;">(not set)</em>' ?></td></tr>
+        <tr><td style="padding:5px 12px;color:#666;">Base URL</td><td><?= $li['base_url'] ? htmlspecialchars($li['base_url']) : '<em style="color:#444;">(not set)</em>' ?></td></tr>
+    </tbody>
+</table>
+<?php endif; ?>

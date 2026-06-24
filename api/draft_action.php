@@ -25,7 +25,7 @@ switch ($action) {
 
     case "approve":
         $pdo->prepare("UPDATE ai_drafts SET status='approved' WHERE id=?")->execute([$id]);
-        $pdo->prepare("INSERT INTO publish_queue (draft_id, status) VALUES (?, 'pending')")->execute([$id]);
+        $pdo->prepare("INSERT IGNORE INTO publish_queue (draft_id, status) VALUES (?, 'pending')")->execute([$id]);
         echo json_encode(["status" => "approved"]);
         break;
 
