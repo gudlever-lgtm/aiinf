@@ -82,6 +82,8 @@ deploy_local() {
     echo "  git pull origin main"
     git pull origin main
     run_migrations
+    echo "  running content safety sweep..."
+    php scripts/sweep_existing_drafts.php || true
     # Uncomment if PHP-FPM opcache needs a flush after deploy:
     # echo "  reloading php-fpm..."
     # systemctl reload php8.2-fpm 2>/dev/null || true
@@ -126,6 +128,8 @@ if [ -n "$DB_NAME" ]; then
 else
     echo "  (no DB credentials — skipping SQL migrations)"
 fi
+echo "  running content safety sweep..."
+php scripts/sweep_existing_drafts.php || true
 echo "  done."
 REMOTE
 }
