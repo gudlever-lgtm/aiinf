@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── Configuration (override via environment variables) ─────────────────────────
+DEPLOY_HOST="${DEPLOY_HOST:-aiinf.gnf.dk}"
+DEPLOY_USER="${DEPLOY_USER:-www-data}"
+DEPLOY_PATH="${DEPLOY_PATH:-/var/www/aiinf.gnf.dk}"
+SSH_KEY="${SSH_KEY:-}"          # leave empty to use SSH agent / default key
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+info() { printf '\033[34m→\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+
+# ── 1. Guard: clean working tree ──────────────────────────────────────────────
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    die "Uncommitted changes present. Commit or stash first."
+fi
+
+# ── 2. Merge current branch into main and push ────────────────────────────────
+CURRENT=$(git rev-parse --abbrev-ref HEAD)
+
+if [ "$CURRENT" = "main" ]; then
+    info "On main — pushing..."
+    git push origin main
+else
+    info "Merging $CURRENT into main..."
+    git checkout main
+    git pull origin main --ff-only
+    git merge --no-ff "$CURRENT" -m "Deploy: merge $CURRENT"
+    git push origin main
+    git checkout "$CURRENT"
+fi
+
+ok "main pushed"
+
+# ── 3. Remote deploy ──────────────────────────────────────────────────────────
+SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+[ -n "$SSH_KEY" ] && SSH_OPTS+=(-i "$SSH_KEY")
+
+info "Deploying to $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH ..."
+
+ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" bash -s "$DEPLOY_PATH" <<'REMOTE'
+set -euo pipefail
+DEPLOY_PATH="$1"
+
+echo "  cd $DEPLOY_PATH"
+cd "$DEPLOY_PATH"
+
+echo "  git pull origin main"
+git pull origin main
+
+echo "  running DB migrations..."
+for f in scripts/migrate_*.php; do
+    [ -f "$f" ] || continue
+    echo "    php $f"
+    php "$f"
+done
+
+# Uncomment if PHP-FPM opcache needs a flush after deploy:
+# echo "  reloading php-fpm..."
+# systemctl reload php8.2-fpm 2>/dev/null || true
+
+echo "  done."
+REMOTE
+
+ok "Deploy complete."
