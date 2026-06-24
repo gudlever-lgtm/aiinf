@@ -1,13 +1,24 @@
 <?php
 require_once __DIR__ . "/db.php";
 
-$type   = $_GET['type'] ?? null;
+$type   = $_GET['type']   ?? null;
+$status = $_GET['status'] ?? null;
 $sql    = "SELECT * FROM ai_drafts";
 $params = [];
+$wheres = [];
 
 if ($type) {
-    $sql     .= " WHERE type = ?";
+    $wheres[] = "type = ?";
     $params[] = $type;
+}
+
+if ($status) {
+    $wheres[] = "status = ?";
+    $params[] = $status;
+}
+
+if ($wheres) {
+    $sql .= " WHERE " . implode(" AND ", $wheres);
 }
 
 $sql .= " ORDER BY id DESC";

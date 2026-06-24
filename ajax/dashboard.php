@@ -11,26 +11,26 @@ $pending     = $pdo->query("SELECT COUNT(*) FROM ai_drafts WHERE status='draft'"
 <h2>Dashboard</h2>
 
 <div class="stats-grid">
-    <div class="stat-card">
+    <a class="stat-card" href="#/import">
         <h2><?= $totalEvents ?></h2>
         <p>Repo Events</p>
-    </div>
-    <div class="stat-card">
+    </a>
+    <a class="stat-card" href="#/drafts">
         <h2><?= $totalDrafts ?></h2>
         <p>Total Drafts</p>
-    </div>
-    <div class="stat-card">
+    </a>
+    <a class="stat-card" href="#/drafts?status=draft">
         <h2><?= $pending ?></h2>
         <p>Pending</p>
-    </div>
-    <div class="stat-card">
+    </a>
+    <a class="stat-card" href="#/publish">
         <h2><?= $approved ?></h2>
         <p>Approved</p>
-    </div>
-    <div class="stat-card">
+    </a>
+    <a class="stat-card" href="#/drafts?status=published">
         <h2><?= $published ?></h2>
         <p>Published</p>
-    </div>
+    </a>
 </div>
 
 <p style="color:#555;font-size:13px;margin-top:10px;">Oversigt over Fellis AI Content Pipeline</p>
