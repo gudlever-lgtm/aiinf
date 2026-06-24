@@ -68,6 +68,7 @@ $drafts = $stmt->fetchAll();
         <button class="btn-approve" onclick="draftAction(<?= $d['id'] ?>,'approve')">Accept</button>
         <button class="btn-reject"  onclick="draftAction(<?= $d['id'] ?>,'reject')">Reject</button>
         <button class="btn-save"    onclick="draftSave(<?= $d['id'] ?>)">Save Edit</button>
+        <button class="btn-regen"   onclick="draftRegenerate(<?= $d['id'] ?>, this)">Regenerate</button>
         <?php else: ?>
         <span style="color:#22c55e;font-size:12px;">Published</span>
         <?php endif; ?>
