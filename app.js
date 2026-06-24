@@ -5,6 +5,7 @@ const ROUTES = {
     settings:  '/ajax/settings.php',
     import:    '/ajax/import.php',
     generate:  '/ajax/generate.php',
+    migrate:   '/ajax/migrate.php',
 };
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
