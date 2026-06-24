@@ -63,7 +63,12 @@ window.draftAction = function(id, action) {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'id=' + id + '&action=' + action,
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+        return r.json().then(function(data) {
+            if (!r.ok) throw new Error(data.error || 'Server error ' + r.status);
+            return data;
+        });
+    })
     .then(function(res) {
         var card = document.getElementById('card-' + id);
         if (!card) return;
@@ -125,7 +130,12 @@ window.publishApprove = function(id) {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'id=' + id + '&action=publish&targets=' + encodeURIComponent(JSON.stringify(targets)),
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+        return r.json().then(function(data) {
+            if (!r.ok) throw new Error(data.error || 'Server error ' + r.status);
+            return data;
+        });
+    })
     .then(function(res) {
         if (res.ok) {
             var card = document.getElementById('q-' + id);

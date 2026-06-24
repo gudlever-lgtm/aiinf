@@ -2,6 +2,8 @@
 require_once __DIR__ . "/../scripts/env.php";
 loadEnv(__DIR__ . "/../.env");
 
+require_once __DIR__ . "/../scripts/content_safety.php";
+
 $pdo = new PDO(
     "mysql:host=" . $_ENV['DB_HOST'] . ";dbname=" . $_ENV['DB_NAME'] . ";charset=utf8mb4",
     $_ENV['DB_USER'],
@@ -24,8 +26,22 @@ if (!$id || !$action) {
 switch ($action) {
 
     case "approve":
+        $dq = $pdo->prepare("SELECT content, type FROM ai_drafts WHERE id=?");
+        $dq->execute([$id]);
+        $draft = $dq->fetch(PDO::FETCH_ASSOC);
+        if (!$draft) {
+            http_response_code(404);
+            echo json_encode(["error" => "Draft not found"]);
+            break;
+        }
+        $check = classifyDraft($draft['content'], $draft['type']);
+        if ($check['severity'] === 'block') {
+            http_response_code(400);
+            echo json_encode(["error" => "Content blocked: " . implode('; ', $check['reasons']), "reasons" => $check['reasons']]);
+            break;
+        }
         $pdo->prepare("UPDATE ai_drafts SET status='approved' WHERE id=?")->execute([$id]);
-        $pdo->prepare("INSERT INTO publish_queue (draft_id, status) VALUES (?, 'pending')")->execute([$id]);
+        $pdo->prepare("INSERT IGNORE INTO publish_queue (draft_id, status) VALUES (?, 'pending')")->execute([$id]);
         echo json_encode(["status" => "approved"]);
         break;
 

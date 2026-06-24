@@ -4,11 +4,12 @@ require_once __DIR__ . "/env.php";
 loadEnv(__DIR__ . "/../.env");
 require_once __DIR__ . "/ai_helpers.php";
 
+require_once __DIR__ . "/content_safety.php";
+
 define('MAX_RETRIES', 2);
 
 // processed column values:
 // 0 = pending, 1 = drafted, 2 = skipped (noise/SKIP), 3 = error (retries exhausted)
-
 $pdo = new PDO(
     "mysql:host=" . $_ENV['DB_HOST'] . ";dbname=" . $_ENV['DB_NAME'] . ";charset=utf8mb4",
     $_ENV['DB_USER'],
@@ -70,8 +71,11 @@ function draftExists(PDO $pdo, int $eventId, string $type): bool
 function insertDraft(PDO $pdo, int $eventId, string $type, string $content, ?string $batchEventIds = null): void
 {
     if (draftExists($pdo, $eventId, $type)) return;
-    $stmt = $pdo->prepare("INSERT INTO ai_drafts (event_id, type, content, status, batch_event_ids) VALUES (?, ?, ?, 'draft', ?)");
-    $stmt->execute([$eventId, $type, $content, $batchEventIds]);
+    $check   = classifyDraft($content, $type);
+    $status  = $check['severity'] === 'block' ? 'blocked' : 'draft';
+    $reasons = empty($check['reasons']) ? null : json_encode($check['reasons']);
+    $stmt = $pdo->prepare("INSERT INTO ai_drafts (event_id, type, content, status, safety_severity, safety_reasons, batch_event_ids) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmt->execute([$eventId, $type, $content, $status, $check['severity'], $reasons, $batchEventIds]);
 }
 
 function markProcessed(PDO $pdo, int $eventId, int $status): void

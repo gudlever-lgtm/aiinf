@@ -18,7 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$service = $_POST['service'] ?? null;
+$service = trim($_POST['service'] ?? '');
 
 if (!$service) {
     http_response_code(400);
@@ -41,22 +41,27 @@ foreach ($secretFields as $field) {
         : ($existing[$field] ?? '');
 }
 
+$toStore['base_url']   = trim($_POST['base_url']   ?? '') ?: ($existing['base_url']   ?? '');
+$toStore['author_urn'] = trim($_POST['author_urn'] ?? '') ?: ($existing['author_urn'] ?? '');
+
 $pdo->prepare("
-    INSERT INTO api_settings (service, api_key, api_secret, access_token, refresh_token, base_url)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO api_settings (service, api_key, api_secret, access_token, refresh_token, base_url, author_urn)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
         api_key       = VALUES(api_key),
         api_secret    = VALUES(api_secret),
         access_token  = VALUES(access_token),
         refresh_token = VALUES(refresh_token),
-        base_url      = VALUES(base_url)
+        base_url      = VALUES(base_url),
+        author_urn    = VALUES(author_urn)
 ")->execute([
     $service,
     $toStore['api_key'],
     $toStore['api_secret'],
     $toStore['access_token'],
     $toStore['refresh_token'],
-    $_POST['base_url'] ?? ($existing['base_url'] ?? ''),
+    $toStore['base_url'],
+    $toStore['author_urn'],
 ]);
 
 echo json_encode(["ok" => true]);
