@@ -75,19 +75,107 @@
 ### `publish.php` (root)
 - Inbound references in repo: **zero**.
 - Content: CLI-style PHP, writes to `storage/publish.log`, no HTML output, processes `ai_drafts` with `status = 'approved'` and marks them `published`.
-- The repo contains no crontab or `.sh` file that references it, but `scripts/sync_fellis.sh` shows the project runs in a live web server context (`/var/www/aiinf.gnf.dk/`). A sysadmin crontab running `php /var/www/aiinf.gnf.dk/publish.php` is plausible and cannot be ruled out from the repo alone.
-- **Verdict: AMBIGUOUS — leave untouched until owner confirms whether it is cron-invoked.**
+- **Owner confirmed: NOT cron-invoked. CONFIRMED DEAD — add to deletion list.**
 
 ---
 
 ## Summary: Safe to Delete
 
-These five files have zero inbound references from any live file and are superseded by the SPA:
+These six files have zero inbound references from any live file and are superseded by the SPA:
 
 1. `drafts.php`
 2. `publish_queue.php`
 3. `settings.php`
-4. `scripts/draft_action.php`
-5. `scripts/publish_action.php`
+4. `publish.php`
+5. `scripts/draft_action.php`
+6. `scripts/publish_action.php`
 
-**Do NOT delete:** `publish.php`, `scripts/env.php`, anything under `/ajax/`, `/api/`, or `/scripts/` except the two listed above.
+**Do NOT delete:** `scripts/env.php`, anything under `/ajax/`, `/api/`, or `/scripts/` except the two listed above.
+
+---
+
+---
+
+# Prompt 2 Audit — Credential Encryption
+
+## Schema
+
+`SHOW CREATE TABLE api_settings` cannot be run directly from this environment, but the
+columns are established by every INSERT/UPDATE in the codebase:
+
+| Column | Type (inferred) | Secret? |
+|---|---|---|
+| `service` | varchar, UNIQUE KEY | No |
+| `api_key` | text/varchar | **Yes** |
+| `api_secret` | text/varchar | **Yes** |
+| `access_token` | text/varchar | **Yes** |
+| `refresh_token` | text/varchar | **Yes** |
+| `base_url` | text/varchar | No — public URL |
+
+All four secret columns are stored as plaintext today.
+
+## Every read/write site
+
+### Write path
+**`api/settings_save.php`** (lines 28–44) — the only write path used by the SPA.
+- Directly interpolates `$_POST[...]` into an `INSERT ... ON DUPLICATE KEY UPDATE`.
+- If a POST field is empty string (`''`), it overwrites the stored value with blank (bug: must fix).
+- No encryption at all.
+
+### Read paths
+1. **`ajax/settings.php:4`** — `SELECT * FROM api_settings` fetched into `$rows`.
+   - Line 48: `print_r($rows, true)` rendered directly to the page (HTML-escaped but fully visible). Every secret is exposed in the settings panel.
+   - Form inputs (lines 36–40) have no `value=` attribute — they show only placeholder text. No pre-population, but the `print_r` below them reveals everything.
+
+2. **`publish.php`** (now confirmed dead) — read from `ai_drafts`, never touched `api_settings`. No credential read.
+
+3. **No other file** reads from `api_settings`. LinkedIn API calls are not yet implemented (publish.php was a simulated stub). So "decrypt at point of use" only applies to a future publisher; for now it applies to the settings display.
+
+### `print_r` audit
+Only one live instance: `ajax/settings.php:48`. The dead `settings.php:60` has a bare `print_r` (no htmlspecialchars) — that file is being deleted.
+
+## Environment / key status
+
+- `.env` is gitignored and not present in this checkout.
+- `scripts/env.php` is a simple line-by-line parser (no quoting support). It sets `$_ENV[key] = trim(value)`.
+- No `APP_ENCRYPTION_KEY` exists. We will add one.
+- No `.env.example` exists. We will create one.
+
+## Crypto availability
+
+Both `sodium` (libsodium) and `openssl` extensions are loaded on this PHP installation. **Use libsodium** (`sodium_crypto_secretbox`) — authenticated encryption, simpler API, no separate HMAC needed.
+
+Key size: `SODIUM_CRYPTO_SECRETBOX_KEYBYTES` = 32 bytes. Store as base64 in `.env`.
+Nonce size: `SODIUM_CRYPTO_SECRETBOX_NONCEBYTES` = 24 bytes. Prepend to ciphertext, base64-encode the pair.
+Ciphertext format on disk: `base64(nonce . ciphertext)` — single string per column, fits existing varchar.
+
+## Proposed implementation plan
+
+1. **Generate key**: `base64_encode(random_bytes(32))` → add as `APP_ENCRYPTION_KEY=<value>` to `.env`.
+   Create `.env.example` with placeholder `APP_ENCRYPTION_KEY=base64_32_byte_key_here` and all DB vars.
+
+2. **`scripts/crypto.php`**: `encrypt(string $plain): string` / `decrypt(string $encoded): string`.
+   - `encrypt`: generate random nonce, `sodium_crypto_secretbox($plain, $nonce, $key)`, return `base64(nonce . ciphertext)`.
+   - `decrypt`: base64-decode, split nonce/ciphertext, `sodium_crypto_secretbox_open(...)`. Return false on failure.
+   - Key loaded from `$_ENV['APP_ENCRYPTION_KEY']` (caller must have loaded .env first).
+
+3. **`api/settings_save.php`** changes:
+   - Before writing, for each secret field: if POST value is non-empty, encrypt it; if empty, `SELECT` the existing stored value and keep it unchanged (don't overwrite with blank).
+   - `base_url` is not a secret — store plaintext.
+
+4. **`ajax/settings.php`** changes:
+   - Remove `print_r` dump entirely.
+   - After fetching rows, decrypt each secret field and show masked: `str_repeat('*', max(0, strlen($plain)-4)) . substr($plain, -4)` — or `(not set)` if empty/null.
+   - Form inputs remain empty (for replacement entry). Add a note: "Leave blank to keep existing value."
+
+5. **`scripts/migrate_encrypt_credentials.php`**: one-off migration.
+   - For each row in `api_settings`, for each secret column: check if value looks like existing base64-encoded ciphertext (try `decrypt()`); if decrypt succeeds, skip (already encrypted); otherwise encrypt in place.
+   - Print a summary: `N rows migrated, M already encrypted, K skipped (empty)`.
+   - Idempotent — safe to run multiple times.
+
+## No behavior change to the SPA
+
+- The settings route (`/ajax/settings.php`) continues to return HTTP 200.
+- Saving via `app.js` → `POST /api/settings_save.php` continues to work.
+- The `base_url` column is non-secret and unchanged.
+- No other SPA routes are affected.
