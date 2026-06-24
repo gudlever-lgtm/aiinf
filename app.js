@@ -71,8 +71,10 @@ window.draftAction = function(id, action) {
             card.classList.remove('draft', 'rejected');
             card.classList.add('approved');
             card.style.boxShadow = '0 0 14px rgba(34,197,94,0.45)';
-            setTimeout(function() { card.style.boxShadow = ''; }, 1000);
-            toast('Draft approved', 'success');
+            card.style.transition = 'opacity 0.4s';
+            setTimeout(function() { card.style.opacity = '0'; }, 600);
+            setTimeout(function() { card.style.display = 'none'; }, 1000);
+            toast('Draft approved — added to publish queue', 'success');
         }
 
         if (res.status === 'rejected') {
