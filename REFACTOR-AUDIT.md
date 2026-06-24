@@ -1,238 +1,181 @@
-# REFACTOR-AUDIT: Content Safety Gate
+# Refactor Audit — Dead Standalone UI
 
-> Status: **AUDIT ONLY** — no code has been changed yet.
+## File Inventory
 
----
+### Root-level pages
+| File | Role | Status |
+|---|---|---|
+| `index.php` | SPA entry point | **LIVE** |
+| `drafts.php` | Old standalone drafts UI | **DEAD** |
+| `publish_queue.php` | Old standalone publish-queue UI | **DEAD** |
+| `settings.php` | Old standalone settings form | **DEAD** |
+| `publish.php` | CLI publisher (no-HTML, echo output) | **AMBIGUOUS** — see note |
 
-## 1. Draft Insertion Sites
+### `/ajax/` (SPA partials — all LIVE)
+- `ajax/dashboard.php`
+- `ajax/db.php` — shared DB helper, `require_once`'d by other ajax files
+- `ajax/drafts.php`
+- `ajax/generate.php`
+- `ajax/import.php`
+- `ajax/publish_queue.php`
+- `ajax/settings.php`
 
-### A. `scripts/generate_drafts.php` — lines 148–155 (ONLY INSERT SITE)
+### `/api/` (SPA action handlers — all LIVE)
+- `api/draft_action.php` — called by `app.js` lines 60, 96
+- `api/publish_action.php` — called by `app.js` lines 122, 142
+- `api/settings_save.php`
 
-```php
-$stmt = $pdo->prepare("
-    INSERT INTO ai_drafts (event_id, type, content, status)
-    VALUES (?, ?, ?, ?)
-");
-
-$stmt->execute([$event['id'], "changelog",     $changelog, "draft"]);
-$stmt->execute([$event['id'], "linkedin_post", $linkedin,  "draft"]);
-$stmt->execute([$event['id'], "founder_update",$founder,   "draft"]);
-```
-
-This is the **sole** INSERT point. It is called by `ajax/generate.php` via
-`shell_exec("php scripts/generate_drafts.php")` when a user clicks "Run Generator"
-in the web UI. Three rows are inserted per git event (changelog, linkedin_post,
-founder_update), always with `status = 'draft'`.
-
-There is NO safety check before this insert. All AI output lands in `ai_drafts`
-regardless of content.
-
----
-
-## 2. Draft Approval / Publish-Queue Sites
-
-There are **two parallel code paths** for approval — a newer API path and an older
-scripts path. Both must be gated.
-
-### A. `api/draft_action.php` — lines 26–30 (PRIMARY approve path)
-
-```php
-case "approve":
-    $pdo->prepare("UPDATE ai_drafts SET status='approved' WHERE id=?")->execute([$id]);
-    $pdo->prepare("INSERT INTO publish_queue (draft_id, status) VALUES (?, 'pending')")->execute([$id]);
-    echo json_encode(["status" => "approved"]);
-    break;
-```
-
-This is the path called by the UI (`ajax/drafts.php` renders the Approve button
-calling `draftAction(id, 'approve')`). It both marks the draft approved **and**
-inserts into `publish_queue` in one step. This is the most important gate point.
-
-### B. `scripts/draft_action.php` — lines 23–26 (OLDER path, no queue insert)
-
-```php
-case "approve":
-    $stmt = $pdo->prepare("UPDATE ai_drafts SET status='approved' WHERE id=?");
-    $stmt->execute([$id]);
-    echo json_encode(["status" => "approved"]);
-    break;
-```
-
-This older endpoint sets `status='approved'` but does **not** insert into
-`publish_queue`. It appears to be a legacy path — unclear if it is still
-reachable from the current UI. Must still be gated so a direct POST cannot
-bypass the safety check.
-
-### C. `publish.php` — lines 22–70 (LEGACY publish path, bypasses publish_queue)
-
-```php
-$stmt = $pdo->query("SELECT * FROM ai_drafts WHERE status = 'approved' ORDER BY created_at ASC");
-// ... processes drafts directly, sets status='published'
-```
-
-This script reads **all** `status='approved'` drafts and publishes them without
-going through `publish_queue` at all. It is a legacy path (simulation only for
-now), but it must also be gated — a blocked draft reaching `status='approved'`
-via the scripts path (B above) could be picked up here.
+### `/scripts/` (utilities)
+| File | Role | Status |
+|---|---|---|
+| `scripts/env.php` | Shared `.env` loader | **LIVE** — `require_once`'d by all `/api/` files and `/ajax/db.php` |
+| `scripts/generate_drafts.php` | AI draft generation | **LIVE** — invoked by `ajax/generate.php:14` |
+| `scripts/import_commits.php` | Commit importer | **LIVE** — invoked by `ajax/import.php:14` |
+| `scripts/draft_action.php` | Old draft action handler | **DEAD** — only called by dead `drafts.php` |
+| `scripts/publish_action.php` | Old publish action handler | **DEAD** — only called by dead `publish_queue.php` |
+| `scripts/sync_fellis.sh` | Git pull shell script | **LIVE** (external cron candidate) |
 
 ---
 
-## 3. Publish-Queue Action Sites
+## Inbound-reference trace per candidate file
 
-These fire after a user clicks "Approve Publish" in the publish queue view.
+### `drafts.php` (root)
+- Inbound references: **none** from any other file.
+- Self-references: filter links `<a href="drafts.php?type=...">` inside its own HTML.
+- Outbound: POSTs to `/scripts/draft_action.php` (dead); `require_once scripts/env.php` (live, but that doesn't make this file live).
+- SPA equivalent: `/ajax/drafts.php` (what `app.js` actually loads).
+- **Verdict: CONFIRMED DEAD.**
 
-### A. `api/publish_action.php` — lines 29–47 (PRIMARY)
+### `publish_queue.php` (root)
+- Inbound references: **none** from any other file.
+- Outbound: POSTs to `/scripts/publish_action.php` (dead).
+- SPA equivalent: `/ajax/publish_queue.php`.
+- **Verdict: CONFIRMED DEAD.**
 
-Sets `publish_queue.status='approved'`, marks draft `status='published'`, inserts
-`publish_targets`. This is the final step before real publication. A second-pass
-safety check here is the last line of defence.
+### `settings.php` (root)
+- Inbound references: **none** from any other file. (`app.js:5` references `/ajax/settings.php`, not this file.)
+- Outbound: `require_once scripts/env.php` (live dependency, does not make this page live); POSTs to itself.
+- SPA equivalent: `/ajax/settings.php` + `/api/settings_save.php`.
+- **Verdict: CONFIRMED DEAD.**
 
-### B. `scripts/publish_action.php` — lines 24–46 (OLDER path)
+### `scripts/draft_action.php`
+- Inbound references: only `drafts.php` (root) at lines 124 and 152 — which is itself dead.
+- No reference from `/api/` or `/ajax/` or `app.js`.
+- **Verdict: CONFIRMED DEAD** (dead caller, dead callee).
 
-Same logic as A but without the `ai_drafts` status update. Same gate needed.
-
----
-
-## 4. DB Schema (inferred from code — no DB.md exists, no live DB in this environment)
-
-```sql
-ai_drafts (
-    id          INT AUTO_INCREMENT PRIMARY KEY,
-    event_id    INT,              -- FK to repo_events.id
-    type        VARCHAR(64),      -- 'changelog' | 'linkedin_post' | 'founder_update'
-    content     TEXT,
-    status      VARCHAR(32),      -- 'draft' | 'approved' | 'rejected' | 'published'
-    created_at  TIMESTAMP
-)
-
-publish_queue (
-    id          INT AUTO_INCREMENT PRIMARY KEY,
-    draft_id    INT,              -- FK to ai_drafts.id
-    status      VARCHAR(32),      -- 'pending' | 'approved' | 'rejected'
-    created_at  TIMESTAMP
-)
-
-publish_targets (
-    queue_id    INT,              -- FK to publish_queue.id
-    target      VARCHAR(64)       -- 'linkedin' | 'blog' | 'changelog'
-)
-
-repo_events (
-    id          INT AUTO_INCREMENT PRIMARY KEY,
-    commit_hash VARCHAR(64),
-    author      VARCHAR(255),
-    message     TEXT,
-    created_at  TIMESTAMP
-)
-```
-
-The implementation requires adding a `safety_flags` column to `ai_drafts`:
-
-```sql
-ALTER TABLE ai_drafts
-    ADD COLUMN safety_severity VARCHAR(16) DEFAULT 'ok'       AFTER status,
-    ADD COLUMN safety_reasons  TEXT        DEFAULT NULL        AFTER safety_severity;
-```
-
-This avoids changing the existing `status` enum semantics. A draft with
-`safety_severity = 'block'` can be stored as `status = 'rejected'` immediately,
-or kept as a new `status = 'blocked'` if you want a separate filter in the UI.
-
-**Question for you to decide before implementation:** Should blocked drafts use
-`status = 'rejected'` (reuses existing status) or a new `status = 'blocked'`
-(more explicit, easier to filter, needs no UI changes unless you want to show
-them)? Recommend `status = 'blocked'` — it keeps blocked content distinct from
-human-rejected content.
+### `scripts/publish_action.php`
+- Inbound references: only `publish_queue.php` (root) at lines 65 and 79 — which is itself dead.
+- No reference from `/api/` or `/ajax/` or `app.js`.
+- **Verdict: CONFIRMED DEAD** (dead caller, dead callee).
 
 ---
 
-## 5. Where the Gate Should Sit
+## Ambiguous / Do Not Touch
 
-```
-scripts/generate_drafts.php
-    line ~147 (before INSERT loop)
-    ├── classifyDraft($content, $type)
-    ├── if 'block'  → INSERT with status='blocked',   safety_severity='block'
-    ├── if 'flag'   → INSERT with status='draft',     safety_severity='flag'
-    └── if 'ok'     → INSERT with status='draft',     safety_severity='ok'   ← current behaviour
-
-api/draft_action.php
-    line ~26 (start of 'approve' case, before any DB write)
-    ├── re-classifyDraft(fetch content by $id)
-    ├── if 'block'  → return 400 JSON error, do NOT insert into publish_queue
-    └── otherwise  → existing behaviour
-
-scripts/draft_action.php
-    line ~23 (start of 'approve' case)
-    └── same gate as above (legacy path)
-
-api/publish_action.php
-    line ~29 (start of 'publish' action, before status updates)
-    └── same gate as above (last line of defence)
-
-scripts/publish_action.php
-    line ~24 (start of 'publish' action)
-    └── same gate as above
-```
+### `publish.php` (root)
+- Inbound references in repo: **zero**.
+- Content: CLI-style PHP, writes to `storage/publish.log`, no HTML output, processes `ai_drafts` with `status = 'approved'` and marks them `published`.
+- **Owner confirmed: NOT cron-invoked. CONFIRMED DEAD — add to deletion list.**
 
 ---
 
-## 6. Proposed Keyword Block-List (for your approval before implementation)
+## Summary: Safe to Delete
 
-### Layer 1 — BLOCK (hard stop, do not store as approvable draft)
+These six files have zero inbound references from any live file and are superseded by the SPA:
 
-**Security posture:**
-- `security audit` / `sikkerhedsaudit`
-- `sårbarhed` / `vulnerability` / `vulnerabilities`
-- `CVE-`
-- `audit finding` / `audit findings`
-- `penetration test` / `pentest`
-- `exploit` (as standalone word)
-- `disclosure` / `responsible disclosure`
+1. `drafts.php`
+2. `publish_queue.php`
+3. `settings.php`
+4. `publish.php`
+5. `scripts/draft_action.php`
+6. `scripts/publish_action.php`
 
-**AI authorship tells:**
-- `Claude` (the model name, not "clause")
-- `Claude Code`
-- `AI-genereret` / `skrevet af AI` / `genereret af AI`
-- `claude/` (branch-name pattern — regex `claude\/[a-z]`)
-- `Anthropic`
-
-**Internal process:**
-- `CLA automation` / `contributor license`
-- `CI pipeline` / `GitHub Actions` / `workflow run`
-- `pre-commit hook`
-
-**Unreleased / internal:**
-- `unreleased` / `ikke frigivet`
-- `internal only` / `intern brug`
-- `ikke offentliggjort`
-
-### Layer 2 — FLAG (store as draft but show warning, do not auto-approve)
-
-- `intentional skip` / `bevidst spring over`
-- `WIP` / `work in progress`
-- `coming soon` / `snart`
-- Any commit hash pattern (regex `\b[0-9a-f]{7,40}\b`) — may leak internal refs
+**Do NOT delete:** `scripts/env.php`, anything under `/ajax/`, `/api/`, or `/scripts/` except the two listed above.
 
 ---
 
-## 7. Summary of Gate Points and Recommended Implementation Order
-
-| Priority | File | Line | Action |
-|----------|------|------|--------|
-| 1 (insert) | `scripts/generate_drafts.php` | 147 | classify before INSERT, set status/severity |
-| 2 (approve) | `api/draft_action.php` | 26 | re-classify before approve; block stops queue insert |
-| 3 (legacy approve) | `scripts/draft_action.php` | 23 | same gate |
-| 4 (publish) | `api/publish_action.php` | 29 | re-classify before final publish |
-| 5 (legacy publish) | `scripts/publish_action.php` | 24 | same gate |
-
-DB migration needed: `ALTER TABLE ai_drafts ADD COLUMN safety_severity, safety_reasons`.
-
 ---
 
-**STOP — awaiting your confirmation of:**
-1. `status='blocked'` vs `status='rejected'` for hard-blocked drafts
-2. The keyword block-list above (add / remove / reclassify any terms)
-3. Confirm these are all the insertion/approval points (no other endpoints?)
+# Prompt 2 Audit — Credential Encryption
 
-Do not implement until confirmed.
+## Schema
+
+`SHOW CREATE TABLE api_settings` cannot be run directly from this environment, but the
+columns are established by every INSERT/UPDATE in the codebase:
+
+| Column | Type (inferred) | Secret? |
+|---|---|---|
+| `service` | varchar, UNIQUE KEY | No |
+| `api_key` | text/varchar | **Yes** |
+| `api_secret` | text/varchar | **Yes** |
+| `access_token` | text/varchar | **Yes** |
+| `refresh_token` | text/varchar | **Yes** |
+| `base_url` | text/varchar | No — public URL |
+
+All four secret columns are stored as plaintext today.
+
+## Every read/write site
+
+### Write path
+**`api/settings_save.php`** (lines 28–44) — the only write path used by the SPA.
+- Directly interpolates `$_POST[...]` into an `INSERT ... ON DUPLICATE KEY UPDATE`.
+- If a POST field is empty string (`''`), it overwrites the stored value with blank (bug: must fix).
+- No encryption at all.
+
+### Read paths
+1. **`ajax/settings.php:4`** — `SELECT * FROM api_settings` fetched into `$rows`.
+   - Line 48: `print_r($rows, true)` rendered directly to the page (HTML-escaped but fully visible). Every secret is exposed in the settings panel.
+   - Form inputs (lines 36–40) have no `value=` attribute — they show only placeholder text. No pre-population, but the `print_r` below them reveals everything.
+
+2. **`publish.php`** (now confirmed dead) — read from `ai_drafts`, never touched `api_settings`. No credential read.
+
+3. **No other file** reads from `api_settings`. LinkedIn API calls are not yet implemented (publish.php was a simulated stub). So "decrypt at point of use" only applies to a future publisher; for now it applies to the settings display.
+
+### `print_r` audit
+Only one live instance: `ajax/settings.php:48`. The dead `settings.php:60` has a bare `print_r` (no htmlspecialchars) — that file is being deleted.
+
+## Environment / key status
+
+- `.env` is gitignored and not present in this checkout.
+- `scripts/env.php` is a simple line-by-line parser (no quoting support). It sets `$_ENV[key] = trim(value)`.
+- No `APP_ENCRYPTION_KEY` exists. We will add one.
+- No `.env.example` exists. We will create one.
+
+## Crypto availability
+
+Both `sodium` (libsodium) and `openssl` extensions are loaded on this PHP installation. **Use libsodium** (`sodium_crypto_secretbox`) — authenticated encryption, simpler API, no separate HMAC needed.
+
+Key size: `SODIUM_CRYPTO_SECRETBOX_KEYBYTES` = 32 bytes. Store as base64 in `.env`.
+Nonce size: `SODIUM_CRYPTO_SECRETBOX_NONCEBYTES` = 24 bytes. Prepend to ciphertext, base64-encode the pair.
+Ciphertext format on disk: `base64(nonce . ciphertext)` — single string per column, fits existing varchar.
+
+## Proposed implementation plan
+
+1. **Generate key**: `base64_encode(random_bytes(32))` → add as `APP_ENCRYPTION_KEY=<value>` to `.env`.
+   Create `.env.example` with placeholder `APP_ENCRYPTION_KEY=base64_32_byte_key_here` and all DB vars.
+
+2. **`scripts/crypto.php`**: `encrypt(string $plain): string` / `decrypt(string $encoded): string`.
+   - `encrypt`: generate random nonce, `sodium_crypto_secretbox($plain, $nonce, $key)`, return `base64(nonce . ciphertext)`.
+   - `decrypt`: base64-decode, split nonce/ciphertext, `sodium_crypto_secretbox_open(...)`. Return false on failure.
+   - Key loaded from `$_ENV['APP_ENCRYPTION_KEY']` (caller must have loaded .env first).
+
+3. **`api/settings_save.php`** changes:
+   - Before writing, for each secret field: if POST value is non-empty, encrypt it; if empty, `SELECT` the existing stored value and keep it unchanged (don't overwrite with blank).
+   - `base_url` is not a secret — store plaintext.
+
+4. **`ajax/settings.php`** changes:
+   - Remove `print_r` dump entirely.
+   - After fetching rows, decrypt each secret field and show masked: `str_repeat('*', max(0, strlen($plain)-4)) . substr($plain, -4)` — or `(not set)` if empty/null.
+   - Form inputs remain empty (for replacement entry). Add a note: "Leave blank to keep existing value."
+
+5. **`scripts/migrate_encrypt_credentials.php`**: one-off migration.
+   - For each row in `api_settings`, for each secret column: check if value looks like existing base64-encoded ciphertext (try `decrypt()`); if decrypt succeeds, skip (already encrypted); otherwise encrypt in place.
+   - Print a summary: `N rows migrated, M already encrypted, K skipped (empty)`.
+   - Idempotent — safe to run multiple times.
+
+## No behavior change to the SPA
+
+- The settings route (`/ajax/settings.php`) continues to return HTTP 200.
+- Saving via `app.js` → `POST /api/settings_save.php` continues to work.
+- The `base_url` column is non-secret and unchanged.
+- No other SPA routes are affected.

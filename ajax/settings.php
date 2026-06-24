@@ -1,7 +1,25 @@
 <?php
 require_once __DIR__ . "/db.php";
+require_once __DIR__ . "/../scripts/crypto.php";
 
 $rows = $pdo->query("SELECT * FROM api_settings")->fetchAll();
+$li = null;
+foreach ($rows as $r) {
+    if ($r['service'] === 'linkedin') { $li = $r; break; }
+}
+
+function maskSecret(?string $stored): string {
+    if ($stored === null || $stored === '') return '(not set)';
+    if (strncmp($stored, 'enc:', 4) === 0) {
+        $plain = decrypt($stored);
+        if ($plain === false) return '(decrypt error)';
+        $s = $plain;
+    } else {
+        $s = $stored; // pre-migration plaintext — mask it too
+    }
+    $len = strlen($s);
+    return ($len > 4 ? str_repeat('*', $len - 4) : '') . substr($s, -4);
+}
 ?>
 
 <h2>API Settings</h2>
@@ -31,18 +49,35 @@ $rows = $pdo->query("SELECT * FROM api_settings")->fetchAll();
         </div>
     </details>
 
+    <?php if ($li): ?>
+    <p style="font-size:12px;color:#555;margin-bottom:14px;">Leave a field blank to keep the existing value.</p>
+    <?php endif; ?>
+
     <form id="settings-form" onsubmit="event.preventDefault(); saveSettings(this)">
         <input name="service" value="linkedin" type="hidden">
-        <input name="api_key"       placeholder="API Key">
-        <input name="api_secret"    placeholder="API Secret">
-        <input name="access_token"  placeholder="Access Token">
-        <input name="refresh_token" placeholder="Refresh Token">
-        <input name="base_url"      placeholder="https://api.linkedin.com">
+
+        <div style="margin-bottom:8px;">
+            <input name="api_key" placeholder="<?= $li ? 'Replace API Key…' : 'API Key' ?>">
+            <?php if ($li): ?><small style="font-size:11px;color:#555;margin-left:6px;"><?= htmlspecialchars(maskSecret($li['api_key'] ?? '')) ?></small><?php endif; ?>
+        </div>
+
+        <div style="margin-bottom:8px;">
+            <input name="api_secret" placeholder="<?= $li ? 'Replace API Secret…' : 'API Secret' ?>">
+            <?php if ($li): ?><small style="font-size:11px;color:#555;margin-left:6px;"><?= htmlspecialchars(maskSecret($li['api_secret'] ?? '')) ?></small><?php endif; ?>
+        </div>
+
+        <div style="margin-bottom:8px;">
+            <input name="access_token" placeholder="<?= $li ? 'Replace Access Token…' : 'Access Token' ?>">
+            <?php if ($li): ?><small style="font-size:11px;color:#555;margin-left:6px;"><?= htmlspecialchars(maskSecret($li['access_token'] ?? '')) ?></small><?php endif; ?>
+        </div>
+
+        <div style="margin-bottom:8px;">
+            <input name="refresh_token" placeholder="<?= $li ? 'Replace Refresh Token…' : 'Refresh Token' ?>">
+            <?php if ($li): ?><small style="font-size:11px;color:#555;margin-left:6px;"><?= htmlspecialchars(maskSecret($li['refresh_token'] ?? '')) ?></small><?php endif; ?>
+        </div>
+
+        <input name="base_url" placeholder="https://api.linkedin.com" value="<?= htmlspecialchars($li['base_url'] ?? '') ?>">
+
         <button type="submit" class="btn-save" style="margin-top:10px;">Save</button>
     </form>
 </div>
-
-<hr>
-
-<h3>Stored Settings</h3>
-<pre><?= htmlspecialchars(print_r($rows, true)) ?></pre>
