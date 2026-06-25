@@ -1,3 +1,15 @@
+function csrfToken() {
+    var m = document.querySelector('meta[name="csrf-token"]');
+    return m ? m.getAttribute('content') : '';
+}
+
+function doLogout() {
+    fetch('/api/logout.php', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken(), 'Content-Type': 'application/x-www-form-urlencoded' },
+    }).finally(function() { window.location.href = '/login.php'; });
+}
+
 const ROUTES = {
     dashboard: '/ajax/dashboard.php',
     drafts:    '/ajax/drafts.php',
@@ -60,7 +72,7 @@ window.addEventListener('load', handleRoute);
 window.draftAction = function(id, action) {
     fetch('/api/draft_action.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrfToken() },
         body: 'id=' + id + '&action=' + action,
     })
     .then(function(r) {
@@ -101,7 +113,7 @@ window.draftSave = function(id) {
 
     fetch('/api/draft_action.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrfToken() },
         body: 'id=' + id + '&action=save&content=' + encodeURIComponent(ta.value),
     })
     .then(function(r) { return r.json(); })
@@ -127,7 +139,7 @@ window.publishApprove = function(id) {
 
     fetch('/api/publish_action.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrfToken() },
         body: 'id=' + id + '&action=publish&targets=' + encodeURIComponent(JSON.stringify(targets)),
     })
     .then(function(r) {
@@ -152,7 +164,7 @@ window.publishApprove = function(id) {
 window.publishReject = function(id) {
     fetch('/api/publish_action.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrfToken() },
         body: 'id=' + id + '&action=reject',
     })
     .then(function(r) { return r.json(); })
@@ -179,7 +191,7 @@ window.draftRegenerate = function(id, btn) {
 
     fetch('/api/regenerate_draft.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrfToken() },
         body: 'id=' + id,
     })
     .then(function(r) { return r.json(); })
@@ -208,7 +220,7 @@ window.saveSettings = function(form) {
 
     fetch('/api/settings_save.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrfToken() },
         body: data,
     })
     .then(function(r) { return r.json(); })

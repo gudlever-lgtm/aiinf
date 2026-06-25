@@ -1,9 +1,14 @@
+<?php
+require_once __DIR__ . '/scripts/auth.php';
+requireAuth();
+?>
 <!DOCTYPE html>
 <html lang="da">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AIINF Control Center</title>
+    <meta name="csrf-token" content="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -371,6 +376,10 @@
         <a class="nav-link" href="#/import"   data-route="import">Import Commits</a>
         <a class="nav-link" href="#/generate" data-route="generate">Generate AI</a>
     </nav>
+
+    <div style="padding:14px 20px;border-top:1px solid #1e1e1e;">
+        <button onclick="doLogout()" style="width:100%;background:#1a1a1a;color:#555;border:1px solid #222;border-radius:5px;padding:7px;font-size:12px;cursor:pointer;">Logout</button>
+    </div>
 </aside>
 
 <main class="main">

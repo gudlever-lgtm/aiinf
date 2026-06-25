@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../scripts/auth.php';
+requireAuth();
 require_once __DIR__ . "/db.php";
 
 $type   = $_GET['type']   ?? null;

@@ -1,5 +1,7 @@
 <?php
-
+require_once __DIR__ . '/../scripts/auth.php';
+requireAuth();
+verifyCsrf();
 require_once __DIR__ . "/../scripts/env.php";
 loadEnv(__DIR__ . "/../.env");
 require_once __DIR__ . "/../scripts/ai_helpers.php";
