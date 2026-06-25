@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../scripts/auth.php';
+requireAuth();
 if (!isset($_GET['run'])) {
     ?>
     <h2>Generate AI Drafts</h2>
