@@ -194,3 +194,129 @@ ALTER TABLE repo_events ADD UNIQUE KEY uq_commit_hash (commit_hash);
 ---
 
 **STOP. Awaiting approval of prompt + gates before any code changes.**
+
+---
+
+---
+
+# Auth Audit — Simple Login (single admin)
+
+## Audit Date: 2026-06-25
+
+---
+
+## 1. Current Auth State
+
+**There is NO authentication anywhere in the codebase.**
+
+Grep results for `session_start`, `$_SESSION`, `login`, `auth`, `password`:
+- Zero matches across all PHP files
+- The app is fully open to any HTTP client
+
+The only protection today is whatever the hosting environment provides (lighttpd basic auth
+was mentioned in the task, but no lighttpd config was found in the repository).
+
+---
+
+## 2. Entry Points to Protect
+
+### `index.php` (SPA shell)
+- Root file, serves the entire app HTML
+- No server-side logic beyond rendering the page
+- Must redirect to login if unauthenticated
+
+### `/ajax/` — 8 files (all unprotected)
+
+| File | What it does | Risk |
+|---|---|---|
+| `dashboard.php` | DB stats query | Read |
+| `db.php` | PDO factory (included, not web-called directly) | — |
+| `drafts.php` | Lists AI drafts | Read |
+| `generate.php` | `shell_exec("php scripts/generate_drafts.php")` | **RCE** |
+| `import.php` | `shell_exec("php scripts/import_commits.php")` | **RCE** |
+| `migrate.php` | `shell_exec("php scripts/migrate_*.php")` | **RCE** |
+| `publish_queue.php` | Lists pending queue | Read |
+| `settings.php` | Shows (masked) LinkedIn credentials | Read/Sensitive |
+
+### `/api/` — 4 files (all unprotected, all POST)
+
+| File | What it does |
+|---|---|
+| `draft_action.php` | Approve / reject drafts |
+| `publish_action.php` | Queue / cancel publish actions |
+| `regenerate_draft.php` | Re-calls Mistral API for a draft |
+| `settings_save.php` | Saves encrypted LinkedIn credentials |
+
+### `publish.php`
+- **Does not exist.** Publishing is triggered via `/api/publish_action.php` from the browser,
+  not a cron script. No cron directory exists. All publishing is web-driven.
+
+---
+
+## 3. `.env` Loading
+
+`scripts/env.php` is a 16-line parser that reads key=value pairs into `$_ENV`.
+It is already required by every ajax and api file. Admin credentials can be added to `.env`
+and read via `$_ENV['ADMIN_USER']` / `$_ENV['ADMIN_PASSWORD_HASH']` with no infrastructure changes.
+
+---
+
+## 4. Implementation Plan
+
+### A. Credentials
+- Add `ADMIN_USER` and `ADMIN_PASSWORD_HASH` to `.env` (and `.env.example` with placeholders)
+- Hash generated once with: `php -r "echo password_hash('YOUR_PASSWORD', PASSWORD_BCRYPT);"`
+- Never store plaintext
+
+### B. `scripts/auth.php`
+Five functions:
+- `startSession()` — configure and start session with secure cookie flags
+- `login($user, $pass): bool` — verify against `.env`, call `session_regenerate_id(true)` on success
+- `isLoggedIn(): bool` — check `$_SESSION['authed']`
+- `logout()` — destroy session + clear cookie
+- `requireAuth()` — for SPA pages: redirect to `/login.php`; for `/api`+`/ajax`: return 401 JSON
+
+Brute-force protection: track `$_SESSION['login_fails']` + `$_SESSION['lockout_until']`;
+sleep(1) on failure, lockout after 5 failures for 5 minutes.
+
+### C. `login.php`
+- Minimal form: username, password, submit
+- POST handler: call `login()`, redirect to `/` on success, show generic "invalid credentials" on failure
+- Generic error only — never reveal which field was wrong
+
+### D. CSRF
+- Generate `$_SESSION['csrf_token']` on login; expose via `<meta name="csrf-token">` in `index.php`
+- `app.js` reads the meta tag and sends `X-CSRF-Token` header on all fetch POSTs
+- `/api/*.php` verifies the header against session token; reject with 403 on mismatch
+
+### E. Wire-in
+- `index.php`: add `require_once 'scripts/auth.php'; requireAuth();` at top
+- Every `/ajax/*.php` and `/api/*.php`: same two lines at top (after existing `require_once` calls)
+- `index.php` sidebar: add Logout link that POSTs to `/api/logout.php`
+- New file: `/api/logout.php` — calls `logout()`, returns JSON success
+
+### F. No CLI impact
+- No cron script exists, so no CLI concern
+- `db.php` is included, not web-callable directly
+
+---
+
+## 5. Files to Create / Modify
+
+| Action | File |
+|---|---|
+| Create | `scripts/auth.php` |
+| Create | `login.php` |
+| Create | `api/logout.php` |
+| Modify | `index.php` — add requireAuth() + csrf meta tag + logout button |
+| Modify | `ajax/dashboard.php`, `drafts.php`, `generate.php`, `import.php`, `migrate.php`, `publish_queue.php`, `settings.php` — add requireAuth() |
+| Modify | `api/draft_action.php`, `publish_action.php`, `regenerate_draft.php`, `settings_save.php` — add requireAuth() + CSRF check |
+| Modify | `.env` — add ADMIN_USER, ADMIN_PASSWORD_HASH |
+| Modify | `.env.example` — add placeholder entries |
+| Modify | `app.js` — read csrf meta tag, send X-CSRF-Token header |
+
+Total: 3 new files, 13 modified files.
+
+---
+
+**STOP. Awaiting confirmation before writing any code.**
