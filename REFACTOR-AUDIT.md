@@ -356,97 +356,190 @@ ALTER TABLE repo_events ADD UNIQUE KEY uq_commit_hash (commit_hash);
 
 ---
 
-# Prompt A Audit — Multi-channel settings + encrypted credentials + target wiring
+# Prompt B Audit — Feedback loop + quality gates
 
-## Table schemas (from scripts/migrate.php)
+## B-1. `draft_action.php` — what each action does today
 
-### api_settings
-Columns: `id`, `service`, `api_key`, `api_secret`, `access_token`, `refresh_token`, `base_url`, `author_urn`
-- `service` has UNIQUE index `uq_service` — `ON DUPLICATE KEY UPDATE` in settings_save.php works correctly.
-- Secret fields (`api_key`, `api_secret`, `access_token`, `refresh_token`) are already stored encrypted.
-- `author_urn` added via migrate.php line 98.
+| Action | SQL written | What is lost |
+|--------|-------------|--------------|
+| `approve` | `UPDATE ai_drafts SET status='approved'` + `INSERT IGNORE INTO publish_queue (draft_id,'pending')` | Runs `classifyDraft()` first; hard-blocks if severity=`block`. Nothing else written. |
+| `reject` | `UPDATE ai_drafts SET status='rejected'` | No reason tag stored. Signal is discarded. |
+| `save` | `UPDATE ai_drafts SET content=?` | Overwrites `content` in place. The original generated text is destroyed — the edit delta (training signal) is unrecoverable. |
 
-### publish_queue
-Columns: `id`, `draft_id`, `status`
-- UNIQUE index `uq_pq_draft_id` on `draft_id`.
-
-### publish_targets
-Columns: `id`, `queue_id`, `target`
-- `queue_id` was renamed from `draft_id` via migrate.php lines 84–86.
-- Holds one row per (queue item, channel). Written to in `api/publish_action.php` line 56.
+**Gaps vs Prompt B requirements:**
+- `reject` writes no vocabulary tag — reason is lost entirely.
+- `save` destroys the original text; there is no way to recover the pre-edit version.
+- No scoring pass happens before or after any action.
+- No fabricated-claim flag is checked on `approve` (the content-safety BLOCK still fires, but the number gate does not exist yet).
 
 ---
 
-## Finding 1 — api_settings.service UNIQUE index
+## B-2. Generator — system prompt + few-shot assembly
 
-**Present.** migrate.php line 101:
+**Files:** `scripts/generate_drafts.php` (main loop) + `scripts/ai_helpers.php` (helpers)
+
+### `buildSystemMsg(PDO $pdo)` — `ai_helpers.php:66`
+
+1. Builds a hard-coded Danish persona block (Lars / Fellis).
+2. Calls `getFewShotExamples($pdo, $type, limit=2)` for each of three types.
+3. Appends examples as `---`-delimited blocks in the system message.
+4. Called once per generation run at `generate_drafts.php:100`; the string is reused
+   for every `callMistral()` call in that run (both per-commit changelog calls and the
+   batch LinkedIn+Founder call).
+
+### `getFewShotExamples($pdo, $type, $limit=2)` — `ai_helpers.php:50`
+
 ```sql
-CREATE UNIQUE INDEX IF NOT EXISTS uq_service ON api_settings (service)
+SELECT content FROM ai_drafts
+WHERE type = ? AND status IN ('approved', 'published')
+ORDER BY id DESC LIMIT ?
 ```
-The `ON DUPLICATE KEY UPDATE` in settings_save.php is correctly anchored.
+
+**Gaps vs Prompt B requirements:**
+- Limit is 2; prompt B wants 3–5.
+- No preference for human-edited posts (no check for `original_content IS NOT NULL`).
+- No preference for recently published (orders by `id`, not `published_at`).
+- Does not distinguish auto-approved (never edited) from gold-standard human-edited drafts.
+
+### Where few-shot injection point is
+
+`buildSystemMsg()` at line 66 of `ai_helpers.php`. Updating `getFewShotExamples()` there
+(bump limit, add column preference) is the only change needed for Part 3.
 
 ---
 
-## Finding 2 — Credential encryption
+## B-3. `SHOW CREATE TABLE ai_drafts` — reconstructed from all migration files
 
-**Already fully implemented.**
+No live DB is available; schema inferred from `scripts/migrate.php`,
+`scripts/migrate_001.php`, `scripts/migrate_002.php`, and `scripts/db_migrate_safety.sql`.
 
-- `scripts/crypto.php`: libsodium `sodium_crypto_secretbox` (authenticated encryption, random nonce per call, stored as `enc:` + base64(nonce . ciphertext)).
-- `api/settings_save.php`: encrypts on write, preserves existing encrypted value when field left blank.
-- `ajax/settings.php`: decrypts and masks (last 4 chars) via `maskSecret()`. No `print_r` anywhere.
-- `scripts/migrate_encrypt_credentials.php`: idempotent one-off migration to encrypt pre-existing plaintext rows.
-- `APP_ENCRYPTION_KEY` documented in `.env.example` with generation command.
+| Column | Type | Default | Added by |
+|--------|------|---------|----------|
+| `id` | INT AUTO_INCREMENT PK | — | baseline |
+| `event_id` | INT | — | baseline |
+| `type` | VARCHAR | — | baseline (`changelog`, `linkedin_post`, `founder_update`) |
+| `content` | TEXT / MEDIUMTEXT | — | baseline |
+| `status` | VARCHAR | `'draft'` | baseline (`draft`, `approved`, `rejected`, `blocked`, `published`) |
+| `safety_severity` | VARCHAR(16) | `'ok'` NOT NULL | migrate_003_safety.sql |
+| `safety_reasons` | TEXT | NULL | migrate_003_safety.sql |
+| `batch_event_ids` | TEXT | NULL | migrate_002.php |
+| `published_at` | DATETIME | NULL | baseline (assumed) |
+| `published_id` | VARCHAR(100) | NULL | migrate.php |
+| `error` | TEXT | NULL | migrate.php |
 
-Nothing to build here — it exists and is correct.
+Unique index: `uq_event_type` on `(event_id, type)`.
 
----
+**Columns NOT YET present (all needed for Prompt B):**
 
-## Finding 3 — Bluesky and Mastodon in settings
-
-**Not implemented.** `ajax/settings.php` only shows LinkedIn. `api/settings_save.php` accepts any `service` value via POST and uses the same `api_settings` columns for all services — no per-service allowlist needed.
-
-Field mapping for each service onto the generic columns:
-
-| Service   | api_key         | api_secret  | access_token  | refresh_token | base_url                   | author_urn |
-|-----------|-----------------|-------------|---------------|---------------|----------------------------|------------|
-| LinkedIn  | Client ID       | Client Sec. | Access Token  | Refresh Token | https://api.linkedin.com   | urn:li:person:… |
-| Bluesky   | Handle          | App Password | (unused)      | (unused)      | https://bsky.social        | (unused) |
-| Mastodon  | (unused)        | (unused)    | Access Token  | (unused)      | instance URL (required)    | (unused) |
-
-The UI must label fields per-service; the DB columns are generic enough to hold all three.
-
----
-
-## Finding 4 — publish_targets wiring
-
-**Already wired.** `api/publish_action.php` lines 55–57 loop over `$_POST['targets']` (JSON array from frontend) and insert one `publish_targets` row per target. `ajax/publish_queue.php` renders LinkedIn/Blog/Changelog checkboxes; `app.js` `publishApprove()` collects checked values and POSTs them as JSON. The write path is complete.
-
-**Gap:** The publish queue UI only has `linkedin`, `blog`, `changelog` checkboxes — no `bluesky` or `mastodon`. This needs to be added alongside the settings sections.
+| Column | Type | Default | Purpose |
+|--------|------|---------|---------|
+| `original_content` | MEDIUMTEXT | NULL | Set once on first `save`; thereafter immutable. NULL = never edited by human. |
+| `reject_reason` | VARCHAR(50) | NULL | Controlled vocabulary tag from reject UI. |
+| `score_voice` | TINYINT | NULL | 1–5 voice-match score from second Mistral pass. |
+| `score_specificity` | TINYINT | NULL | 1–5 specificity score. |
+| `score_triviality` | TINYINT | NULL | 1–5 non-triviality score. |
+| `flag_unverified_claim` | TINYINT | DEFAULT 0 | 1 if draft contains a number/% not present in source commit. |
 
 ---
 
-## Plan (pending approval)
+## B-4. Implementation plan (independent parts, each a separate commit)
 
-### Step 1 — `ajax/settings.php`: add Bluesky + Mastodon sections
-- Mirror the LinkedIn form structure.
-- Show only the fields each service uses; label them with the service-specific name (e.g. "Handle" not "API Key" for Bluesky, "App Password" not "API Secret").
-- The "Current Settings" table at the bottom should list all three services.
+### Part 0 — `scripts/migrate_004.php` (schema first, zero app impact)
 
-### Step 2 — `api/settings_save.php`: no changes needed
-- Accepts any `service`, encrypts the right fields, preserves blanks. Works as-is for bluesky and mastodon.
+```sql
+ALTER TABLE ai_drafts ADD COLUMN IF NOT EXISTS original_content MEDIUMTEXT NULL;
+ALTER TABLE ai_drafts ADD COLUMN IF NOT EXISTS reject_reason VARCHAR(50) NULL;
+ALTER TABLE ai_drafts ADD COLUMN IF NOT EXISTS score_voice TINYINT NULL;
+ALTER TABLE ai_drafts ADD COLUMN IF NOT EXISTS score_specificity TINYINT NULL;
+ALTER TABLE ai_drafts ADD COLUMN IF NOT EXISTS score_triviality TINYINT NULL;
+ALTER TABLE ai_drafts ADD COLUMN IF NOT EXISTS flag_unverified_claim TINYINT NOT NULL DEFAULT 0;
+```
 
-### Step 3 — `ajax/publish_queue.php`: add bluesky + mastodon checkboxes
-- Add `bluesky` and `mastodon` as targets alongside the existing three.
+All NULL-able / defaulted — existing rows unaffected.
 
-### Step 4 — No publish_targets schema change needed
-- `queue_id` + `target` (VARCHAR) already supports any string target value.
+### Part 1 — Capture the edit diff
 
-### Step 5 — No crypto changes needed
-- Already using libsodium secretbox with authenticated encryption.
+**File:** `api/draft_action.php` `save` case.
 
-### Step 6 — Run `scripts/migrate_encrypt_credentials.php` in production
-- One-off: encrypts any pre-existing plaintext rows. Already written and idempotent.
+Before `UPDATE ai_drafts SET content=?`, check whether `original_content IS NULL`.
+If so, read current `content` and write both in one statement:
+
+```sql
+UPDATE ai_drafts
+SET original_content = CASE WHEN original_content IS NULL THEN content ELSE original_content END,
+    content = ?
+WHERE id = ?
+```
+
+This is set-once: second and subsequent saves only update `content`.
+
+### Part 2 — Structured reject reasons
+
+**Files:** `api/draft_action.php` + UI (JS).
+
+- Accept `reject_reason` POST param; validate it against the allowed vocabulary.
+- `UPDATE ai_drafts SET status='rejected', reject_reason=? WHERE id=?`.
+- UI: reject button opens a small picker before submitting:
+  `off-voice | trivial | leaks-internal | repetitive | factually-wrong | other`.
+
+### Part 3 — Few-shot from published posts (highest quality impact)
+
+**File:** `scripts/ai_helpers.php` `getFewShotExamples()`.
+
+Updated query:
+
+```sql
+SELECT COALESCE(original_content, content)  -- prefer edited version as gold standard (not yet: use content until col exists)
+FROM ai_drafts
+WHERE type = ?
+  AND status IN ('approved', 'published')
+ORDER BY
+  (original_content IS NOT NULL) DESC,   -- human-edited first
+  published_at DESC,                     -- most recent
+  id DESC
+LIMIT ?
+```
+
+Bump default limit from 2 to 4.
+
+### Part 4 — Pre-review scoring pass
+
+**Files:** `scripts/ai_helpers.php` (new `scoreDraft()`) + `scripts/generate_drafts.php` + UI.
+
+`scoreDraft()`:
+- One Mistral call at temperature 0.0, asking for JSON `{"voice":N,"specificity":N,"triviality":N}` (1–5).
+- Wrapped in try/catch + CURLOPT_TIMEOUT; on failure, leave columns NULL — no exception propagated.
+- Called from `insertDraft()` in `generate_drafts.php` after INSERT succeeds.
+- Env var `SCORE_THRESHOLD` (default 3): drafts where any score < threshold are hidden from the
+  default view and shown only under a "low score" filter toggle.
+
+### Part 5 — Fabricated-number gate
+
+**Files:** `scripts/ai_helpers.php` (new `hasUnverifiedClaim()`) + `scripts/generate_drafts.php` + UI.
+
+`hasUnverifiedClaim(string $draftContent, string $sourceText): bool`:
+- Regex-extract numbers and percentages from `$draftContent`.
+- For each, check if it appears literally in `$sourceText` (commit message + `changed_files`).
+- Return `true` if any extracted number is absent from source.
+
+Called after `insertDraft()`. If true:
+```sql
+UPDATE ai_drafts SET flag_unverified_claim = 1 WHERE id = ?
+```
+
+UI shows a warning banner on flagged cards. `draft_action.php` `approve` does NOT hard-block
+(human decides), but the flag must be visible. Auto-publish is not implemented (prompt 0 guard
+still applies).
+
+### Implementation order
+
+0. `migrate_004.php` — run first, no app change.
+1. Part 1 (edit diff) — minimal `draft_action.php` change.
+2. Part 2 (reject reason) — `draft_action.php` + UI.
+3. Part 3 (few-shot) — `ai_helpers.php` only, highest ROI.
+4. Part 4 (scoring) — new helper + `generate_drafts.php` + UI filter.
+5. Part 5 (fabrication gate) — new helper + `generate_drafts.php` + UI warning.
 
 ---
 
-**STOP. Awaiting confirmation before implementation.**
+**STOP (Prompt B). Awaiting confirmation before writing any code.**
